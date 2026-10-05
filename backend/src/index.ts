@@ -115,9 +115,9 @@ app.get('/o/r/:uid/:filename', async (c) => {
 
     // 检查 R2 绑定是否存在
     if (!c.env.R2) {
-      return c.json({ message: 'R2 bucket not configured' }, 500);
-    }
-
+  // 提示用户去系统后台切换存储方式
+  return c.json({ message: '存储尚未配置，请先登录管理员账号在 Memos 设置中将存储类型切换至 Database' }, 400);
+}
     // 从 R2 获取文件
     const r2Key = `${uid}/${filename}`;
     const object = await c.env.R2.get(r2Key);
