@@ -9,8 +9,6 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 LOG_LEVEL = "info"
 BASE_URL = "https://memos-api.mgt.xx.kg" # 👈 填入你给Worker绑定的域名，末尾别加斜杠
-JWT_SECRET = "MemosSecureTokenSecretKeyStringToFixHmacError2026" # 👈 必须加在这里！长度务必超过32个字符
-
 
 # Secrets - set via wrangler secret put
 # JWT_SECRET
