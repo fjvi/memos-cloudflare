@@ -16,9 +16,6 @@ BASE_URL = ""
 # R2_SECRET_ACCESS_KEY
 
 # 单 Worker 同源部署：Worker 同时托管前端静态资源与 API
-[assets]
-directory = "../frontend/dist"
-binding = "ASSETS"
 
 [[d1_databases]]
 binding = "DB"
