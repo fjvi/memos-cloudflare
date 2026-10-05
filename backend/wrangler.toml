@@ -8,8 +8,6 @@ compatibility_flags = ["nodejs_compat"]
 LOG_LEVEL = "info"
 # 留空则 instanceUrl 回退为请求 origin（单 Worker 同源部署推荐留空）
 BASE_URL = ""
-ALLOWED_ORIGINS = "https://mmos.pages.dev"
-JWT_SECRET = "memos.6889692"
 
 # Secrets - set via wrangler secret put
 # JWT_SECRET
