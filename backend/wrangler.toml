@@ -22,10 +22,6 @@ binding = "DB"
 database_name = "memos-db"
 database_id = "8d43a949-4075-4e91-84f8-335cae26080c"
 
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "memos-db"
-
 [env.staging]
 name = "memos-cloudflare-staging"
 
