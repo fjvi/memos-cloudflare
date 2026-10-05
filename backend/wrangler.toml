@@ -20,7 +20,7 @@ BASE_URL = ""
 [[d1_databases]]
 binding = "DB"
 database_name = "memos-api"
-database_id = "8d43a949-4075-4e91-84f8-335cae26080"
+database_id = "8d43a949-4075-4e91-84f8-335cae26080c"
 
 [[r2_buckets]]
 binding = "R2"
