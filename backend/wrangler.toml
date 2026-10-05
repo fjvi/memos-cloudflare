@@ -1,13 +1,16 @@
 name = "memos-api"
 main = "src/index.ts"
 compatibility_date = "2024-06-01"
-
+routes = [
+  { pattern = "https://memos-api.mgt.xx.kg/*", custom_domain = true }
+]
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
 LOG_LEVEL = "info"
-# 留空则 instanceUrl 回退为请求 origin（单 Worker 同源部署推荐留空）
-BASE_URL = ""
+BASE_URL = "https://memos-api.mgt.xx.kg" # 👈 填入你给Worker绑定的域名，末尾别加斜杠
+JWT_SECRET = "MemosSecureTokenSecretKeyStringToFixHmacError2026" # 👈 必须加在这里！长度务必超过32个字符
+
 
 # Secrets - set via wrangler secret put
 # JWT_SECRET
