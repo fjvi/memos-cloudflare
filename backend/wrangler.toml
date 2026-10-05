@@ -23,8 +23,8 @@ database_name = "memos-api"
 database_id = "8d43a949-4075-4e91-84f8-335cae26080c"
 
 [[r2_buckets]]
-binding = "R2"
-bucket_name = "memos-assets"
+binding = "BUCKET"
+bucket_name = "memos-db"
 
 [env.staging]
 name = "memos-cloudflare-staging"
