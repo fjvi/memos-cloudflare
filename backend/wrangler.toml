@@ -2,7 +2,7 @@ name = "memos-api"
 main = "src/index.ts"
 compatibility_date = "2024-06-01"
 routes = [
-  { pattern = "https://memos-api.mgt.xx.kg/*", custom_domain = true }
+  { pattern = "memos-api.mgt.xx.kg/*", custom_domain = true }
 ]
 compatibility_flags = ["nodejs_compat"]
 
