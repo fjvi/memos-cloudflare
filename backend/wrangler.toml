@@ -8,7 +8,8 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 LOG_LEVEL = "info"
-BASE_URL = "https://mmos.pages.dev" # 👈 这里必须保留 https://，且末尾不要加 /
+BASE_URL = "https://mmos.pages.dev"
+ALLOWED_ORIGINS = "https://mmos.pages.dev"
 
 
 # Secrets - set via wrangler secret put
