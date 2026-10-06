@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useAuth } from "@/contexts/AuthContext";
-import { useUpdateUserGeneralSetting } from "@/hooks/useUserQueries";
+import { useAuth } from "@/store/v1";
+import { useUpdateUserGeneralSetting } from "@/store/v1/userSetting";
 import { Visibility } from "@/types/proto/api/v1/memo_service_pb";
 import { UserSetting_GeneralSetting, UserSetting_GeneralSettingSchema } from "@/types/proto/api/v1/user_service_pb";
 import { loadLocale, useTranslate } from "@/utils/i18n";
@@ -20,50 +20,65 @@ const PreferencesSection = () => {
   const { mutate: updateUserGeneralSetting } = useUpdateUserGeneralSetting(currentUser?.name);
 
   const handleLocaleSelectChange = (locale: Locale) => {
-    // Apply locale immediately for instant UI feedback and persist to localStorage
+    // 1. 立即更新界面语言并写入本地持久化，防止后端 API 报错被覆盖
     loadLocale(locale);
-    // Persist to user settings
+    localStorage.setItem("memos-locale", locale);
+
+    // 2. 尝试向后端更新设置（添加 onError 容错拦截）
     updateUserGeneralSetting(
       { generalSetting: { locale }, updateMask: ["locale"] },
       {
         onSuccess: () => {
           refetchSettings();
         },
+        onError: (err) => {
+          console.warn("后端保存偏好配置失败，已切为本地存储模式：", err);
+        },
       },
     );
   };
 
   const handleDefaultMemoVisibilityChanged = (value: string) => {
+    // 立即存入本地缓存
+    localStorage.setItem("memos-default-visibility", value);
+
     updateUserGeneralSetting(
       { generalSetting: { memoVisibility: value }, updateMask: ["memo_visibility"] },
       {
         onSuccess: () => {
           refetchSettings();
         },
+        onError: (err) => {
+          console.warn("后端保存默认可见性失败，已切为本地存储模式：", err);
+        },
       },
     );
   };
 
   const handleThemeChange = (theme: string) => {
-    // Apply theme immediately for instant UI feedback
     loadTheme(theme);
-    // Persist to user settings
     updateUserGeneralSetting(
       { generalSetting: { theme }, updateMask: ["theme"] },
       {
         onSuccess: () => {
           refetchSettings();
         },
+        onError: (err) => {
+          console.warn("后端保存主题设置失败：", err);
+        },
       },
     );
   };
 
-  // Provide default values if setting is not loaded yet
+  // 优先使用后端 Setting；若后端配置未加载/报错，则读取本地缓存，最次兜底为简体中文 "zh-Hans"
+  const savedLocale = (localStorage.getItem("memos-locale") as Locale) || "zh-Hans";
+  const savedVisibility = localStorage.getItem("memos-default-visibility") || "PRIVATE";
+
   const setting: UserSetting_GeneralSetting =
     generalSetting ||
     create(UserSetting_GeneralSettingSchema, {
-      locale: "en",
-      memoVisibility: "PRIVATE",
+      locale: savedLocale,
+      memoVisibility: savedVisibility,
       theme: "system",
     });
 
