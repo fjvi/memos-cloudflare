@@ -8,7 +8,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 LOG_LEVEL = "info"
-BASE_URL = "https://memos-api.mgt.xx.kg" # 👈 这里必须保留 https://，且末尾不要加 /
+BASE_URL = "https://mmos.pages.dev" # 👈 这里必须保留 https://，且末尾不要加 /
 JWT_SECRET = "abcdefghijklmnopqrstuvwxyz1234567890ABCDEF" # 👈 确保长密钥在这里
 
 
