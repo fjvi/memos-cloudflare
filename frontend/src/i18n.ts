@@ -51,13 +51,14 @@ const LazyImportPlugin: BackendModule = {
   read: function (language, _, callback) {
     const matchedLanguage = findNearestMatchedLanguage(language);
     import(`./locales/${matchedLanguage}.json`)
-      .then((translationModule: Record<string, unknown>) => {
-        callback(null, (translationModule.default as Record<string, unknown>) ?? translationModule);
+      .then((translationModule: Record) => {
+        callback(null, (translationModule.default as Record) ?? translationModule);
       })
       .catch(() => {
-        import("./locales/en.json")
-          .then((translationModule: Record<string, unknown>) => {
-            callback(null, (translationModule.default as Record<string, unknown>) ?? translationModule);
+        // 如果找不到对应语言，回退加载简体中文 zh-Hans.json 而不是 en.json
+        import("./locales/zh-Hans.json")
+          .then((translationModule: Record) => {
+            callback(null, (translationModule.default as Record) ?? translationModule);
           })
           .catch((error: unknown) => {
             callback(error as Error, false);
@@ -67,18 +68,18 @@ const LazyImportPlugin: BackendModule = {
 };
 
 i18n
-  .use(LazyImportPlugin)
-  .use(initReactI18next)
+  .use(LazyImportPlugin)  .use(initReactI18next)
   .init({
+    lng: "zh-Hans", // 1. 强制设定当前默认语言为简体中文
     detection: {
-      order: ["navigator"],
+      order: [], // 2. 禁用浏览器环境自动检测（清空 order），防止被覆盖
     },
     interpolation: {
       escapeValue: false,
     },
     fallbackLng: {
       ...fallbacks,
-      ...{ default: ["en"] },
+      ...{ default: ["zh-Hans"] }, // 3. 将默认回退语言由 ["en"] 改为 ["zh-Hans"]
     } as FallbackLng,
   });
 
