@@ -11,7 +11,6 @@ LOG_LEVEL = "info"
 BASE_URL = "https://mmos.pages.dev"
 ALLOWED_ORIGINS = "https://mmos.pages.dev"
 
-
 # Secrets - set via wrangler secret put
 # JWT_SECRET
 # ALLOWED_ORIGINS  
