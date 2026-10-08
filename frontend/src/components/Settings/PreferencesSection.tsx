@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useAuth } from "@/store/v1";
-import { useUpdateUserGeneralSetting } from "@/store/v1/userSetting";
+import { useAuth } from "@/store";
+import { useUpdateUserGeneralSetting } from "@/store/userSetting";
 import { Visibility } from "@/types/proto/api/v1/memo_service_pb";
 import { UserSetting_GeneralSetting, UserSetting_GeneralSettingSchema } from "@/types/proto/api/v1/user_service_pb";
 import { loadLocale, useTranslate } from "@/utils/i18n";
