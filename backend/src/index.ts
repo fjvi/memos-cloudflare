@@ -22,145 +22,43 @@ import { Env } from './types';
 const app = new Hono<{ Bindings: Env }>();
 
 // 全局中间件
-// ===== 增强版中间件：彻底拦截并修复 UpdateUser / ChangePassword 的 update_mask 问题 =====
-app.use('*', async (c, next) => {
-  const method = c.req.method;
-  const contentType = c.req.header('content-type') || '';
-
-  // 匹配所有 JSON 和 Connect-RPC 的 POST/PATCH 请求
-  if ((method === 'POST' || method === 'PATCH' || method === 'PUT') && 
-      (contentType.includes('json') || contentType.includes('connect'))) {
-    try {
-      const rawBody = await c.req.text();
-      if (rawBody && rawBody.trim().startsWith('{')) {
-        const body = JSON.parse(rawBody);
-        let modified = false;
-
-        // 1. 字段名转换：把驼峰 updateMask 转换为 蛇形 update_mask
-        if (body.updateMask && !body.update_mask) {
-          body.update_mask = Array.isArray(body.updateMask) 
-            ? body.updateMask 
-            : String(body.updateMask).split(',');
-          modified = true;
-        }
-
-        // 2. 检查 update_mask 是否为空或者未设置
-        const hasValidMask = body.update_mask && 
-          (Array.isArray(body.update_mask) ? body.update_mask.length > 0 : String(body.update_mask).trim() !== '');
-
-        if (!hasValidMask) {
-          // A. 针对 UpdateUser / ChangePassword 请求（修改密码/更新用户）
-          if (body.user && typeof body.user === 'object') {
-            const keys = Object.keys(body.user)
-              .filter(k => k !== 'name' && body.user[k] !== undefined && body.user[k] !== null)
-              .map(k => k.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)); // 驼峰转蛇形（如 displayName -> display_name）
-            
-            // 如果检测到包含 password，确保 password / password_hash 被加入 mask
-            if (keys.length > 0) {
-              body.update_mask = keys;
-              modified = true;
-            } else if (body.user.password) {
-              body.update_mask = ['password'];
-              modified = true;
-            }
-          } 
-          // B. 针对 UpdateMemo 请求
-          else if (body.memo && typeof body.memo === 'object') {
-            const keys = Object.keys(body.memo)
-              .filter(k => k !== 'name' && body.memo[k] !== undefined && body.memo[k] !== null)
-              .map(k => k.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`));
-            if (keys.length > 0) {
-              body.update_mask = keys;
-              modified = true;
-            }
-          } 
-          // C. 针对系统设置请求
-          else if (body.setting || body.value) {
-            body.update_mask = ['value'];
-            modified = true;
-          }
-        }
-
-        // 如果 `update_mask` 是数组，部分 Protocol Buffers 解析器要求用 comma-separated string（或保持数组）
-        if (modified) {
-          const modifiedRequest = new Request(c.req.raw, {
-            body: JSON.stringify(body),
-            headers: c.req.raw.headers
-          });
-          c.req.raw = modifiedRequest;
-        }
-      }
-    } catch (e) {
-      // 遇到非合法 JSON 则忽略，继续向下传递
+app.use('*', cors({
+  origin: (origin, c) => {
+    // 开发环境允许的域名
+    const allowedOrigins = [
+      'http://localhost:3001',
+      'http://localhost:3000',
+      'https://your-frontend-name.pages.dev'
+    ];
+    
+    // 从环境变量获取允许的域名
+    const envOrigins = c.env.ALLOWED_ORIGINS ? c.env.ALLOWED_ORIGINS.split(',') : [];
+    const allAllowed = [...allowedOrigins, ...envOrigins];
+    
+    // 如果origin在允许列表中，或者是localhost，则允许
+    if (!origin || allAllowed.includes(origin) || origin.includes('localhost')) {
+      return origin;
     }
-  }
+    
+    // 如果是以 *.pages.dev 结尾的域名，也允许（Cloudflare Pages）
+    if (origin && origin.includes('.pages.dev')) {
+      return origin;
+    }
+    
+    // 默认允许第一个环境变量域名，或者直接返回origin（更宽松的策略）
+    return origin || envOrigins[0] || allowedOrigins[0];
+  },
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  // Connect-Protocol-Version / Connect-Timeout-Ms 为 @connectrpc/connect-web 必发头，
+  // X-Retry 为前端 401 重试标记——缺一个都会导致浏览器 CORS 预检失败
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'Connect-Protocol-Version', 'Connect-Timeout-Ms', 'X-Retry'],
+  exposeHeaders: ['X-Request-Id'],
+  credentials: true,
+  maxAge: 86400
+}));
 
-  await next();
-});
 app.use('*', logger());
 app.use('/api/*', prettyJSON());
-
-// ===== 关键补丁中间件：自动修复 update_mask 映射和缺失问题 =====
-app.use('*', async (c, next) => {
-  const method = c.req.method;
-  const contentType = c.req.header('content-type') || '';
-
-  if ((method === 'POST' || method === 'PATCH' || method === 'PUT') && contentType.includes('application/json')) {
-    try {
-      const rawBody = await c.req.text();
-      if (rawBody && rawBody.trim().startsWith('{')) {
-        const body = JSON.parse(rawBody);
-
-        let modified = false;
-
-        // 1. 兼容转换：把驼峰 updateMask 转换为 蛇形 update_mask
-        if (body.updateMask && !body.update_mask) {
-          body.update_mask = body.updateMask;
-          modified = true;
-        }
-
-        // 2. 智能补全：当两者均缺失时，根据请求的 payload 主体自动推导 update_mask 字段
-        if (!body.update_mask && !body.updateMask) {
-          if (body.user && typeof body.user === 'object') {
-            // 匹配 UpdateUser 接口
-            const keys = Object.keys(body.user)
-              .filter(k => k !== 'name' && body.user[k] !== undefined)
-              .map(k => k.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)); // 驼峰转蛇形
-            if (keys.length > 0) {
-              body.update_mask = keys;
-              modified = true;
-            }
-          } else if (body.memo && typeof body.memo === 'object') {
-            // 匹配 UpdateMemo 接口
-            const keys = Object.keys(body.memo)
-              .filter(k => k !== 'name' && body.memo[k] !== undefined)
-              .map(k => k.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`));
-            if (keys.length > 0) {
-              body.update_mask = keys;
-              modified = true;
-            }
-          } else if (body.setting || body.value) {
-            // 匹配 UpdateInstanceSetting 接口
-            body.update_mask = ['value'];
-            modified = true;
-          }
-        }
-
-        if (modified) {
-          // 重新将修补后的 Request 注入到 c.req.raw 中
-          const modifiedRequest = new Request(c.req.raw, {
-            body: JSON.stringify(body)
-          });
-          c.req.raw = modifiedRequest;
-        }
-      }
-    } catch (e) {
-      // JSON 解析异常忽略，放行原请求处理
-    }
-  }
-
-  await next();
-});
 
 // 健康检查端点
 app.get('/health', (c) => {
@@ -217,9 +115,9 @@ app.get('/o/r/:uid/:filename', async (c) => {
 
     // 检查 R2 绑定是否存在
     if (!c.env.R2) {
-      // 提示用户去系统后台切换存储方式
-      return c.json({ message: '存储尚未配置，请先登录管理员账号在 Memos 设置中将存储类型切换至 Database' }, 400);
+      return c.json({ message: 'R2 bucket not configured' }, 500);
     }
+
     // 从 R2 获取文件
     const r2Key = `${uid}/${filename}`;
     const object = await c.env.R2.get(r2Key);
@@ -261,4 +159,6 @@ app.onError((err, c) => {
   }, 500);
 });
 
-export default app;
+
+
+export default app; 
