@@ -1,0 +1,43 @@
+name: Deploy Memos Worker
+
+on:
+  push:
+    branches:
+      - main  
+  workflow_dispatch: # 支持网页手动点击运行
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      # 1. 构建前端静态资源
+      - name: Build Frontend
+        run: |
+          cd frontend
+          pnpm install
+          pnpm build
+
+      # 2. 部署 Backend Worker 并配置 Secret
+      - name: Deploy Worker to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: 'backend'
+          secrets: |
+            JWT_SECRET
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
