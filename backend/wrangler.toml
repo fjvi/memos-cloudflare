@@ -23,7 +23,7 @@ ALLOWED_ORIGINS = "https://mmos.pages.dev"
 [[d1_databases]]
 binding = "DB"
 database_name = "memos-db"
-database_id = "8d43a949-4075-4e91-84f8-335cae26080c"
+database_id = "8518611e-c1a1-401f-9fcb-00d544ee549f"
 
 [env.staging]
 name = "memos-cloudflare-staging"
