@@ -60,6 +60,68 @@ app.use('*', cors({
 app.use('*', logger());
 app.use('/api/*', prettyJSON());
 
+// ===== 关键补丁中间件：自动修复 update_mask 映射和缺失问题 =====
+app.use('*', async (c, next) => {
+  const method = c.req.method;
+  const contentType = c.req.header('content-type') || '';
+
+  if ((method === 'POST' || method === 'PATCH' || method === 'PUT') && contentType.includes('application/json')) {
+    try {
+      const rawBody = await c.req.text();
+      if (rawBody && rawBody.trim().startsWith('{')) {
+        const body = JSON.parse(rawBody);
+
+        let modified = false;
+
+        // 1. 兼容转换：把驼峰 updateMask 转换为 蛇形 update_mask
+        if (body.updateMask && !body.update_mask) {
+          body.update_mask = body.updateMask;
+          modified = true;
+        }
+
+        // 2. 智能补全：当两者均缺失时，根据请求的 payload 主体自动推导 update_mask 字段
+        if (!body.update_mask && !body.updateMask) {
+          if (body.user && typeof body.user === 'object') {
+            // 匹配 UpdateUser 接口
+            const keys = Object.keys(body.user)
+              .filter(k => k !== 'name' && body.user[k] !== undefined)
+              .map(k => k.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)); // 驼峰转蛇形
+            if (keys.length > 0) {
+              body.update_mask = keys;
+              modified = true;
+            }
+          } else if (body.memo && typeof body.memo === 'object') {
+            // 匹配 UpdateMemo 接口
+            const keys = Object.keys(body.memo)
+              .filter(k => k !== 'name' && body.memo[k] !== undefined)
+              .map(k => k.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`));
+            if (keys.length > 0) {
+              body.update_mask = keys;
+              modified = true;
+            }
+          } else if (body.setting || body.value) {
+            // 匹配 UpdateInstanceSetting 接口
+            body.update_mask = ['value'];
+            modified = true;
+          }
+        }
+
+        if (modified) {
+          // 重新将修补后的 Request 注入到 c.req.raw 中
+          const modifiedRequest = new Request(c.req.raw, {
+            body: JSON.stringify(body)
+          });
+          c.req.raw = modifiedRequest;
+        }
+      }
+    } catch (e) {
+      // JSON 解析异常忽略，放行原请求处理
+    }
+  }
+
+  await next();
+});
+
 // 健康检查端点
 app.get('/health', (c) => {
   return c.json({
@@ -115,9 +177,9 @@ app.get('/o/r/:uid/:filename', async (c) => {
 
     // 检查 R2 绑定是否存在
     if (!c.env.R2) {
-  // 提示用户去系统后台切换存储方式
-  return c.json({ message: '存储尚未配置，请先登录管理员账号在 Memos 设置中将存储类型切换至 Database' }, 400);
-}
+      // 提示用户去系统后台切换存储方式
+      return c.json({ message: '存储尚未配置，请先登录管理员账号在 Memos 设置中将存储类型切换至 Database' }, 400);
+    }
     // 从 R2 获取文件
     const r2Key = `${uid}/${filename}`;
     const object = await c.env.R2.get(r2Key);
@@ -159,6 +221,4 @@ app.onError((err, c) => {
   }, 500);
 });
 
-
-
-export default app; 
+export default app;
