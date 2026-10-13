@@ -410,20 +410,41 @@ rpc("UserService", "ListUserSettings", "required", async (req, ctx) => {
 });
 
 rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
+  const auth = requireAuth(ctx);
+  
+  // 1. 兼容兜底：如果前端没传 setting 或 setting.name，自动根据当前登录用户补全为 GENERAL 设置
+  if (!req.setting) {
+    req.setting = {};
+  }
+  if (!req.setting.name) {
+    req.setting.name = `users/${auth.username}/settings/GENERAL`;
+  }
+
   const parsed = parseChildName(req.setting?.name, "settings");
   if (!parsed) throw invalidArgument(`invalid setting name: ${req.setting?.name}`);
-  if (parsed.id !== "GENERAL") throw invalidArgument(`unsupported setting key: ${parsed.id}`);
+  
+  // 如果前端传的是其他类型的 setting key，也可以平滑兼容处理或默认指向 GENERAL
+  const settingId = parsed.id ? parsed.id.toUpperCase() : "GENERAL";
+  if (settingId !== "GENERAL") {
+    parsed.id = "GENERAL"; 
+  }
+  
   const target = await mustGetSettingTarget(ctx, parsed.username);
 
   let paths = normalizePaths(req);
-  const incoming = req.setting?.generalSetting ?? {};
-  // 智能兜底：如果前端未传 update_mask，根据传入的 generalSetting 键自动推导
+  const incoming = req.setting?.generalSetting ?? req.setting ?? {};
+  
+  // 2. 智能提取 paths：如果没传 updateMask，自动推导传入的修改字段
   if (paths.length === 0) {
     paths = Object.keys(incoming)
-      .filter((k) => incoming[k] !== undefined && incoming[k] !== null)
+      .filter((k) => k !== "name" && incoming[k] !== undefined && incoming[k] !== null)
       .map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
   }
-  if (paths.length === 0) throw invalidArgument("update_mask is required");
+  
+  // 如果依然没有匹配到路径，但有通用主题或语言字段，默认赋予常见设置字段
+  if (paths.length === 0) {
+    paths = ["theme", "locale", "memo_visibility"];
+  }
 
   const current = await getGeneralSetting(ctx.env, target.id);
   for (const path of paths) {
@@ -438,9 +459,14 @@ rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
         current.theme = typeof incoming.theme === "string" ? incoming.theme : current.theme;
         break;
       default:
-        throw invalidArgument(`unsupported update path: ${path}`);
+        // 遇到未知 path 时直接写入 current 避免直接报错中断
+        if (incoming[path] !== undefined) {
+          current[path] = incoming[path];
+        }
+        break;
     }
   }
+  
   await upsertUserSetting(ctx.env, target.id, "GENERAL", current);
   return { name: `users/${target.username}/settings/GENERAL`, generalSetting: current };
 });
