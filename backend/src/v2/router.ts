@@ -32,10 +32,42 @@ export function mountConnectRoutes(app: Hono<{ Bindings: Env }>) {
   app.post("/:service{memos\\.api\\.v1\\.[A-Za-z]+}/:method", async (c) => {
     const key = `${c.req.param("service")}/${c.req.param("method")}`;
     
-    // 💡 强行拦截并打印：不管三七二十一，先看看进到网关的 UpdateUserSetting 长什么样
+    // 💡 终极网关兜底：直接在最前端接管 UpdateUserSetting，绕过 registry 校验
     if (key === "memos.api.v1.UserService/UpdateUserSetting") {
-      const rawText = await c.req.text();
-      console.log("=== 捕获到 UpdateUserSetting 请求 ===", rawText);
+      try {
+        const rawText = await c.req.text();
+        const body = rawText ? JSON.parse(rawText) : {};
+        const incoming = body.setting?.generalSetting ?? body.setting ?? body;
+        const locale = incoming.locale || "en";
+        const theme = incoming.theme || incoming.appearance || "system";
+
+        const auth = await authenticate(c.req.raw, c.env).catch(() => null);
+        if (!auth) {
+          return new Response(JSON.stringify({ code: 16, message: "unauthenticated" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        // 直接写入 D1 数据库
+        const current = { locale, theme, appearance: theme, memoVisibility: "PRIVATE" };
+        await c.env.DB.prepare(
+          `INSERT INTO user_setting (user_id, key, value) VALUES (?, 'GENERAL', ?)
+           ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`
+        ).bind(auth.userId, JSON.stringify(current)).run();
+
+        return new Response(JSON.stringify({
+          setting: {
+            name: `users/${auth.username}/settings/GENERAL`,
+            generalSetting: current,
+          }
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (e) {
+        console.error("Gateway UpdateUserSetting error:", e);
+      }
     }
 
     const registration = registry.get(key);
