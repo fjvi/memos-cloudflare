@@ -49,9 +49,22 @@ const mustGetUserByName = async (env: Env, name: string): Promise<UserRow> => {
   return user;
 };
 
-/** updateMask paths 统一为 snake_case */
-const normalizePaths = (req: any): string[] =>
-  ((req?.updateMask?.paths ?? []) as string[]).map((p) => p.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
+/** 完美兼容字符串、数组或对象的 updateMask 解析器 */
+const normalizePaths = (req: any): string[] => {
+  const rawMask = req?.updateMask ?? req?.update_mask;
+  let paths: string[] = [];
+  
+  if (typeof rawMask === "string") {
+    // 兼容前端传单字符串的情况，如 "locale" 或逗号分隔的 "locale,theme"
+    paths = rawMask.split(",").map((s) => s.trim()).filter(Boolean);
+  } else if (Array.isArray(rawMask)) {
+    paths = rawMask.map((p) => String(p));
+  } else if (Array.isArray(rawMask?.paths)) {
+    paths = rawMask.paths;
+  }
+  
+  return paths.map((p) => p.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
+};
 
 const validateUsername = (username: unknown): string => {
   if (typeof username !== "string" || username.length === 0) throw invalidArgument("username is required");
