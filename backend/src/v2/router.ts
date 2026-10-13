@@ -29,8 +29,25 @@ export function rpc(service: string, method: string, auth: AuthPolicy, handler: 
 
 /** 挂载 Connect JSON 路由。所有 RPC 都是 POST /memos.api.v1.<Service>/<Method> */
 export function mountConnectRoutes(app: Hono<{ Bindings: Env }>) {
-  app.post("/:service{memos\\.api\\.v1\\.[A-Za-z]+}/:method", async (c) => {
+app.post("/:service{memos\\.api\\.v1\\.[A-Za-z]+}/:method", async (c) => {
     const key = `${c.req.param("service")}/${c.req.param("method")}`;
+    
+    // 💡 调试终极杀招：如果是 UpdateUserSetting，先不走业务逻辑，直接把收到的 raw 打印出来并返回 200！
+    if (key === "memos.api.v1.UserService/UpdateUserSetting") {
+      const debugRaw = await c.req.text();
+      console.log("=== 捕获到前端发来的 UpdateUserSetting 原始数据 ===", debugRaw);
+      
+      return new Response(JSON.stringify({
+        setting: {
+          name: "users/me/settings/GENERAL",
+          generalSetting: { theme: "system", locale: "en", memoVisibility: "PRIVATE" }
+        }
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
     const registration = registry.get(key);
 
     try {
