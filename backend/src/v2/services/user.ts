@@ -400,18 +400,22 @@ const mustGetSettingTarget = async (ctx: RpcContext, username: string): Promise<
 rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
   const auth = requireAuth(ctx);
 
-  // 1. 极度宽松地从各种可能的位置提取目标 user 和 setting 名字
-  const settingName = req.setting?.name || req.name || `users/${auth.username}/settings/GENERAL`;
-  const parsed = parseChildName(settingName, "settings");
-  
-  // 如果解析不出用户名，默认就是当前登录用户
-  const username = parsed?.username || auth.username;
+  // 1. 极其宽容地解析目标用户名（绝不因格式不匹配抛出 400）
+  let username = auth.username;
+  const rawName = req.setting?.name || req.name;
+  if (rawName) {
+    const parsed = parseChildName(rawName, "settings");
+    if (parsed?.username) {
+      username = parsed.username;
+    }
+  }
+
   const target = await mustGetSettingTarget(ctx, username);
 
-  // 2. 兼容各种层级的传参（兼容前端把字段直接塞在根节点、setting里、或 generalSetting 里）
+  // 2. 兼容各种层级的传参（无论字段在根节点、setting里还是 generalSetting里都能抓到）
   const incoming = req.setting?.generalSetting ?? req.setting ?? req;
 
-  // 3. 自动归纳要更新的路径
+  // 3. 自动提取或推导更新路径
   let paths = normalizePaths(req);
   if (paths.length === 0) {
     paths = Object.keys(incoming)
@@ -422,9 +426,9 @@ rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
     paths = ["theme", "locale", "memo_visibility", "appearance"];
   }
 
-  // 4. 读取当前设置并覆盖
+  // 4. 读取当前设置并应用更新
   const current = await getGeneralSetting(ctx.env, target.id);
-  
+
   for (const path of paths) {
     const val = incoming[path] ?? incoming[path.replace(/_([a-z])/g, (_, g) => g.toUpperCase())];
     if (val !== undefined) {
@@ -439,7 +443,7 @@ rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
         case "theme":
         case "appearance":
           current.theme = val;
-          current.appearance = val; // 兼容前端传 appearance 或 theme
+          current.appearance = val;
           break;
         default:
           current[path] = val;
@@ -447,6 +451,17 @@ rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
       }
     }
   }
+
+  await upsertUserSetting(ctx.env, target.id, "GENERAL", current);
+
+  // 5. 返回符合标准规范的响应结构
+  return {
+    setting: {
+      name: `users/${target.username}/settings/GENERAL`,
+      generalSetting: current,
+    },
+  };
+});
 
 await upsertUserSetting(ctx.env, target.id, "GENERAL", current);
   
