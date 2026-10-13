@@ -49,17 +49,9 @@ const mustGetUserByName = async (env: Env, name: string): Promise<UserRow> => {
   return user;
 };
 
-/** 增强版 normalizePaths：兼容数组格式与对象格式，并统一转换为 snake_case[cite: 2] */
-const normalizePaths = (req: any): string[] => {
-  const rawMask = req?.updateMask ?? req?.update_mask;
-  let paths: string[] = [];
-  if (Array.isArray(rawMask)) {
-    paths = rawMask.map((p) => String(p));
-  } else if (Array.isArray(rawMask?.paths)) {
-    paths = rawMask.paths;
-  }
-  return paths.map((p) => p.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
-};
+/** updateMask paths 统一为 snake_case */
+const normalizePaths = (req: any): string[] =>
+  ((req?.updateMask?.paths ?? []) as string[]).map((p) => p.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
 
 const validateUsername = (username: unknown): string => {
   if (typeof username !== "string" || username.length === 0) throw invalidArgument("username is required");
@@ -191,19 +183,13 @@ rpc("UserService", "UpdateUser", "required", async (req, ctx) => {
   const admin = isAdmin(auth);
   if (!admin && auth.userId !== target.id) throw permissionDenied("cannot update other user");
 
-  let paths = normalizePaths(req);
-  const user = req.user ?? {};
-  // 智能兜底：如果前端未显式传递 update_mask，根据传入的 payload 键名自动推导
-  if (paths.length === 0) {
-    paths = Object.keys(user)
-      .filter((k) => k !== "name" && user[k] !== undefined && user[k] !== null)
-      .map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
-  }
+  const paths = normalizePaths(req);
   if (paths.length === 0) throw invalidArgument("update_mask is required");
 
   const general = await getInstanceGeneralSetting(ctx.env);
   const sets: string[] = [];
   const params: unknown[] = [];
+  const user = req.user ?? {};
 
   for (const path of paths) {
     switch (path) {
@@ -397,81 +383,46 @@ const mustGetSettingTarget = async (ctx: RpcContext, username: string): Promise<
   return target;
 };
 
-rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
-  const auth = requireAuth(ctx);
-
-  // 1. 极其宽容地解析目标用户名（绝不因格式不匹配抛出 400）
-  let username = auth.username;
-  const rawName = req.setting?.name || req.name;
-  if (rawName) {
-    const parsed = parseChildName(rawName, "settings");
-    if (parsed?.username) {
-      username = parsed.username;
-    }
-  }
-
+rpc("UserService", "ListUserSettings", "required", async (req, ctx) => {
+  const username = parseName(req.parent, "users");
+  if (!username) throw invalidArgument(`invalid parent: ${req.parent}`);
   const target = await mustGetSettingTarget(ctx, username);
 
-  // 2. 兼容各种层级的传参（无论字段在根节点、setting里还是 generalSetting里都能抓到）
-  const incoming = req.setting?.generalSetting ?? req.setting ?? req;
-
-  // 3. 自动提取或推导更新路径
-  let paths = normalizePaths(req);
-  if (paths.length === 0) {
-    paths = Object.keys(incoming)
-      .filter((k) => k !== "name" && k !== "setting" && incoming[k] !== undefined && incoming[k] !== null)
-      .map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
-  }
-  if (paths.length === 0) {
-    paths = ["theme", "locale", "memo_visibility", "appearance"];
-  }
-
-  // 4. 读取当前设置并应用更新
-  const current = await getGeneralSetting(ctx.env, target.id);
-
-  for (const path of paths) {
-    const val = incoming[path] ?? incoming[path.replace(/_([a-z])/g, (_, g) => g.toUpperCase())];
-    if (val !== undefined) {
-      switch (path) {
-        case "locale":
-          current.locale = val;
-          break;
-        case "memo_visibility":
-        case "memoVisibility":
-          current.memoVisibility = val;
-          break;
-        case "theme":
-        case "appearance":
-          current.theme = val;
-          current.appearance = val;
-          break;
-        default:
-          current[path] = val;
-          break;
-      }
-    }
-  }
-
-  await upsertUserSetting(ctx.env, target.id, "GENERAL", current);
-
-  // 5. 返回符合标准规范的响应结构
-  return {
-    setting: {
-      name: `users/${target.username}/settings/GENERAL`,
-      generalSetting: current,
-    },
-  };
+  const settings = [
+    { name: `users/${target.username}/settings/GENERAL`, generalSetting: await getGeneralSetting(ctx.env, target.id) },
+    { name: `users/${target.username}/settings/WEBHOOKS`, webhooksSetting: { webhooks: await loadWebhooks(ctx.env, target) } },
+  ];
+  return { settings, nextPageToken: "", totalSize: settings.length };
 });
 
-await upsertUserSetting(ctx.env, target.id, "GENERAL", current);
-  
-  // 保持最精简的响应返回，避免多层嵌套触发序列化崩溃
-  return { 
-    setting: {
-      name: `users/${target.username}/settings/GENERAL`,
-      generalSetting: current
+rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
+  const parsed = parseChildName(req.setting?.name, "settings");
+  if (!parsed) throw invalidArgument(`invalid setting name: ${req.setting?.name}`);
+  if (parsed.id !== "GENERAL") throw invalidArgument(`unsupported setting key: ${parsed.id}`);
+  const target = await mustGetSettingTarget(ctx, parsed.username);
+
+  const paths = normalizePaths(req);
+  if (paths.length === 0) throw invalidArgument("update_mask is required");
+
+  const current = await getGeneralSetting(ctx.env, target.id);
+  const incoming = req.setting?.generalSetting ?? {};
+  for (const path of paths) {
+    switch (path) {
+      case "locale":
+        current.locale = typeof incoming.locale === "string" ? incoming.locale : current.locale;
+        break;
+      case "memo_visibility":
+        current.memoVisibility = typeof incoming.memoVisibility === "string" ? incoming.memoVisibility : current.memoVisibility;
+        break;
+      case "theme":
+        current.theme = typeof incoming.theme === "string" ? incoming.theme : current.theme;
+        break;
+      default:
+        throw invalidArgument(`unsupported update path: ${path}`);
     }
-  };
+  }
+  await upsertUserSetting(ctx.env, target.id, "GENERAL", current);
+  return { name: `users/${target.username}/settings/GENERAL`, generalSetting: current };
 });
 
 // ---------- Webhook（存 user_setting key=WEBHOOKS 的 JSON）----------
@@ -533,13 +484,7 @@ rpc("UserService", "UpdateUserWebhook", "required", async (req, ctx) => {
   const webhook = webhooks.find((w) => w.name === req.webhook.name);
   if (!webhook) throw notFound(`webhook not found: ${req.webhook.name}`);
 
-  let paths = normalizePaths(req);
-  if (paths.length === 0 && req.webhook) {
-    paths = Object.keys(req.webhook)
-      .filter((k) => k !== "name" && req.webhook[k] !== undefined)
-      .map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
-  }
-
+  const paths = normalizePaths(req);
   const apply = (path: string) => {
     if (path === "url") {
       if (typeof req.webhook.url === "string" && req.webhook.url.length > 0) webhook.url = req.webhook.url;
@@ -552,6 +497,7 @@ rpc("UserService", "UpdateUserWebhook", "required", async (req, ctx) => {
   if (paths.length > 0) {
     for (const path of paths) apply(path);
   } else {
+    // 无 mask 时按提供的字段更新
     if (typeof req.webhook.url === "string" && req.webhook.url.length > 0) webhook.url = req.webhook.url;
     if (typeof req.webhook.displayName === "string") webhook.displayName = req.webhook.displayName;
   }
@@ -906,12 +852,7 @@ rpc("UserService", "UpdateUserNotification", "required", async (req, ctx) => {
   const id = Number(parsed.id);
   if (!Number.isInteger(id)) throw invalidArgument(`invalid notification id: ${parsed.id}`);
 
-  let paths = normalizePaths(req);
-  if (paths.length === 0 && req.notification) {
-    paths = Object.keys(req.notification)
-      .filter((k) => k !== "name" && req.notification[k] !== undefined)
-      .map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
-  }
+  const paths = normalizePaths(req);
   if (paths.length > 0 && !paths.includes("status")) throw invalidArgument("only status can be updated");
   const status = req.notification?.status;
   if (status !== "UNREAD" && status !== "ARCHIVED") throw invalidArgument(`invalid status: ${status}`);

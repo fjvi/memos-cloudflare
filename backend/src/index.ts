@@ -60,58 +60,6 @@ app.use('*', cors({
 app.use('*', logger());
 app.use('/api/*', prettyJSON());
 
-// ===== 💡 拦截补丁 =====
-app.use('*', async (c, next) => {
-  const path = c.req.path;
-  // 专门拦截 UserService 相关（如 UpdateUser, UpdateUserSetting）以及其他需要 update_mask 的请求
-  if (path.includes('UserService/') || path.includes('MemoService/') || path.includes('InstanceSettingService/')) {
-    try {
-      const rawBody = await c.req.text();
-      if (rawBody && rawBody.trim().startsWith('{')) {
-        const body = JSON.parse(rawBody);
-        let modified = false;
-
-        // 1. 转换驼峰 updateMask -> 蛇形 update_mask
-        if (body.updateMask && !body.update_mask) {
-          body.update_mask = Array.isArray(body.updateMask) ? body.updateMask : String(body.updateMask).split(',');
-          modified = true;
-        }
-
-        // 2. 如果缺少 update_mask，直接暴力赋予全量更新字段，彻底避开 invalid_argument 错误
-        const hasMask = body.update_mask && (Array.isArray(body.update_mask) ? body.update_mask.length > 0 : String(body.update_mask).trim() !== '');
-        if (!hasMask) {
-          if (path.includes('UpdateUser')) {
-            body.update_mask = ["username", "display_name", "email", "avatar_url", "description", "password", "role", "preference"];
-            modified = true;
-          } else if (path.includes('UpdateUserSetting') || path.includes('UpdateSetting')) {
-            body.update_mask = ["value", "key"];
-            modified = true;
-          } else if (path.includes('UpdateMemo')) {
-            body.update_mask = ["content", "visibility", "pinned", "snippet", "resource_ids"];
-            modified = true;
-          } else {
-            // 通用保底 mask
-            body.update_mask = ["value", "title", "description", "username", "display_name", "email", "avatar_url", "password"];
-            modified = true;
-          }
-        }
-
-        if (modified) {
-          const modifiedRequest = new Request(c.req.raw, {
-            body: JSON.stringify(body),
-            headers: c.req.raw.headers,
-            method: c.req.method
-          });
-          c.req.raw = modifiedRequest;
-        }
-      }
-    } catch (e) {
-      // 忽略解析错误，正常通行
-    }
-  }
-  await next();
-});
-
 // 健康检查端点
 app.get('/health', (c) => {
   return c.json({
