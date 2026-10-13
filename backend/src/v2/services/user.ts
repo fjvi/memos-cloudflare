@@ -448,14 +448,14 @@ rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
     }
   }
 
-  await upsertUserSetting(ctx.env, target.id, "GENERAL", current);
+await upsertUserSetting(ctx.env, target.id, "GENERAL", current);
+  
+  // 保持最精简的响应返回，避免多层嵌套触发序列化崩溃
   return { 
-    name: `users/${target.username}/settings/GENERAL`, 
     setting: {
       name: `users/${target.username}/settings/GENERAL`,
       generalSetting: current
-    },
-    generalSetting: current 
+    }
   };
 });
 
