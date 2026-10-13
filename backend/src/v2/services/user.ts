@@ -345,7 +345,7 @@ rpc("UserService", "GetUserStats", "optional", async (req, ctx) => {
 rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
   const auth = requireAuth(ctx);
   
-  // 1. 获取目标用户的 ID（优先从请求中解析，失败则用当前登录用户）
+  // 1. 获取目标用户的 ID
   let targetUserId = auth.userId;
   const rawName = req.setting?.name || req.name;
   if (rawName) {
@@ -356,13 +356,13 @@ rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
     }
   }
 
-  // 2. 暴力提取前端传来的设置值（兼容各种嵌套层级）
+  // 2. 极其宽容地提取前端传来的设置项（兼容各种结构嵌套）
   const incoming = req.setting?.generalSetting ?? req.setting ?? req;
   const locale = incoming.locale;
   const theme = incoming.theme ?? incoming.appearance;
   const memoVisibility = incoming.memoVisibility ?? incoming.memo_visibility;
 
-  // 3. 读取当前用户的 GENERAL 设置，并合并新值
+  // 3. 读取当前用户的 GENERAL 设置并合并
   const current = await getGeneralSetting(ctx.env, targetUserId);
   if (locale !== undefined) current.locale = locale;
   if (theme !== undefined) {
@@ -371,10 +371,10 @@ rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
   }
   if (memoVisibility !== undefined) current.memoVisibility = memoVisibility;
 
-  // 4. 直接硬编码写入 D1 数据库的 user_setting 表
+  // 4. 直接持久化写入 D1 数据库
   await upsertUserSetting(ctx.env, targetUserId, "GENERAL", current);
 
-  // 5. 立即返回成功响应
+  // 5. 返回符合标准的响应
   const targetUserRow = await ctx.env.DB.prepare("SELECT username FROM user WHERE id = ?").bind(targetUserId).first<{ username: string }>();
   const username = targetUserRow?.username || auth.username;
 
