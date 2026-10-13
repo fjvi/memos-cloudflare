@@ -29,10 +29,15 @@ export function rpc(service: string, method: string, auth: AuthPolicy, handler: 
 
 /** 挂载 Connect JSON 路由。所有 RPC 都是 POST /memos.api.v1.<Service>/<Method> */
 export function mountConnectRoutes(app: Hono<{ Bindings: Env }>) {
-  // 路径形如 /memos.api.v1.MemoService/ListMemos。“.”不是段分隔符，
-  // Hono 段内不支持静态前缀混写，这里用段内正则参数匹配整个 service 全名。
   app.post("/:service{memos\\.api\\.v1\\.[A-Za-z]+}/:method", async (c) => {
     const key = `${c.req.param("service")}/${c.req.param("method")}`;
+    
+    // 💡 强行拦截并打印：不管三七二十一，先看看进到网关的 UpdateUserSetting 长什么样
+    if (key === "memos.api.v1.UserService/UpdateUserSetting") {
+      const rawText = await c.req.text();
+      console.log("=== 捕获到 UpdateUserSetting 请求 ===", rawText);
+    }
+
     const registration = registry.get(key);
 
     try {
