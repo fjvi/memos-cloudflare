@@ -397,78 +397,66 @@ const mustGetSettingTarget = async (ctx: RpcContext, username: string): Promise<
   return target;
 };
 
-rpc("UserService", "ListUserSettings", "required", async (req, ctx) => {
-  const username = parseName(req.parent, "users");
-  if (!username) throw invalidArgument(`invalid parent: ${req.parent}`);
-  const target = await mustGetSettingTarget(ctx, username);
-
-  const settings = [
-    { name: `users/${target.username}/settings/GENERAL`, generalSetting: await getGeneralSetting(ctx.env, target.id) },
-    { name: `users/${target.username}/settings/WEBHOOKS`, webhooksSetting: { webhooks: await loadWebhooks(ctx.env, target) } },
-  ];
-  return { settings, nextPageToken: "", totalSize: settings.length };
-});
-
 rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
   const auth = requireAuth(ctx);
-  
-  // 1. 兼容兜底：如果前端没传 setting 或 setting.name，自动根据当前登录用户补全为 GENERAL 设置
-  if (!req.setting) {
-    req.setting = {};
-  }
-  if (!req.setting.name) {
-    req.setting.name = `users/${auth.username}/settings/GENERAL`;
-  }
 
-  const parsed = parseChildName(req.setting?.name, "settings");
-  if (!parsed) throw invalidArgument(`invalid setting name: ${req.setting?.name}`);
+  // 1. 极度宽松地从各种可能的位置提取目标 user 和 setting 名字
+  const settingName = req.setting?.name || req.name || `users/${auth.username}/settings/GENERAL`;
+  const parsed = parseChildName(settingName, "settings");
   
-  // 如果前端传的是其他类型的 setting key，也可以平滑兼容处理或默认指向 GENERAL
-  const settingId = parsed.id ? parsed.id.toUpperCase() : "GENERAL";
-  if (settingId !== "GENERAL") {
-    parsed.id = "GENERAL"; 
-  }
-  
-  const target = await mustGetSettingTarget(ctx, parsed.username);
+  // 如果解析不出用户名，默认就是当前登录用户
+  const username = parsed?.username || auth.username;
+  const target = await mustGetSettingTarget(ctx, username);
 
+  // 2. 兼容各种层级的传参（兼容前端把字段直接塞在根节点、setting里、或 generalSetting 里）
+  const incoming = req.setting?.generalSetting ?? req.setting ?? req;
+
+  // 3. 自动归纳要更新的路径
   let paths = normalizePaths(req);
-  const incoming = req.setting?.generalSetting ?? req.setting ?? {};
-  
-  // 2. 智能提取 paths：如果没传 updateMask，自动推导传入的修改字段
   if (paths.length === 0) {
     paths = Object.keys(incoming)
-      .filter((k) => k !== "name" && incoming[k] !== undefined && incoming[k] !== null)
+      .filter((k) => k !== "name" && k !== "setting" && incoming[k] !== undefined && incoming[k] !== null)
       .map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
   }
-  
-  // 如果依然没有匹配到路径，但有通用主题或语言字段，默认赋予常见设置字段
   if (paths.length === 0) {
-    paths = ["theme", "locale", "memo_visibility"];
+    paths = ["theme", "locale", "memo_visibility", "appearance"];
   }
 
+  // 4. 读取当前设置并覆盖
   const current = await getGeneralSetting(ctx.env, target.id);
+  
   for (const path of paths) {
-    switch (path) {
-      case "locale":
-        current.locale = typeof incoming.locale === "string" ? incoming.locale : current.locale;
-        break;
-      case "memo_visibility":
-        current.memoVisibility = typeof incoming.memoVisibility === "string" ? incoming.memoVisibility : current.memoVisibility;
-        break;
-      case "theme":
-        current.theme = typeof incoming.theme === "string" ? incoming.theme : current.theme;
-        break;
-      default:
-        // 遇到未知 path 时直接写入 current 避免直接报错中断
-        if (incoming[path] !== undefined) {
-          current[path] = incoming[path];
-        }
-        break;
+    const val = incoming[path] ?? incoming[path.replace(/_([a-z])/g, (_, g) => g.toUpperCase())];
+    if (val !== undefined) {
+      switch (path) {
+        case "locale":
+          current.locale = val;
+          break;
+        case "memo_visibility":
+        case "memoVisibility":
+          current.memoVisibility = val;
+          break;
+        case "theme":
+        case "appearance":
+          current.theme = val;
+          current.appearance = val; // 兼容前端传 appearance 或 theme
+          break;
+        default:
+          current[path] = val;
+          break;
+      }
     }
   }
-  
+
   await upsertUserSetting(ctx.env, target.id, "GENERAL", current);
-  return { name: `users/${target.username}/settings/GENERAL`, generalSetting: current };
+  return { 
+    name: `users/${target.username}/settings/GENERAL`, 
+    setting: {
+      name: `users/${target.username}/settings/GENERAL`,
+      generalSetting: current
+    },
+    generalSetting: current 
+  };
 });
 
 // ---------- Webhook（存 user_setting key=WEBHOOKS 的 JSON）----------
