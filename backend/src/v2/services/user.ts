@@ -49,9 +49,17 @@ const mustGetUserByName = async (env: Env, name: string): Promise<UserRow> => {
   return user;
 };
 
-/** updateMask paths 统一为 snake_case */
-const normalizePaths = (req: any): string[] =>
-  ((req?.updateMask?.paths ?? []) as string[]).map((p) => p.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
+/** 增强版 normalizePaths：兼容数组格式与对象格式，并统一转换为 snake_case[cite: 2] */
+const normalizePaths = (req: any): string[] => {
+  const rawMask = req?.updateMask ?? req?.update_mask;
+  let paths: string[] = [];
+  if (Array.isArray(rawMask)) {
+    paths = rawMask.map((p) => String(p));
+  } else if (Array.isArray(rawMask?.paths)) {
+    paths = rawMask.paths;
+  }
+  return paths.map((p) => p.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
+};
 
 const validateUsername = (username: unknown): string => {
   if (typeof username !== "string" || username.length === 0) throw invalidArgument("username is required");
@@ -183,13 +191,19 @@ rpc("UserService", "UpdateUser", "required", async (req, ctx) => {
   const admin = isAdmin(auth);
   if (!admin && auth.userId !== target.id) throw permissionDenied("cannot update other user");
 
-  const paths = normalizePaths(req);
+  let paths = normalizePaths(req);
+  const user = req.user ?? {};
+  // 智能兜底：如果前端未显式传递 update_mask，根据传入的 payload 键名自动推导
+  if (paths.length === 0) {
+    paths = Object.keys(user)
+      .filter((k) => k !== "name" && user[k] !== undefined && user[k] !== null)
+      .map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
+  }
   if (paths.length === 0) throw invalidArgument("update_mask is required");
 
   const general = await getInstanceGeneralSetting(ctx.env);
   const sets: string[] = [];
   const params: unknown[] = [];
-  const user = req.user ?? {};
 
   for (const path of paths) {
     switch (path) {
@@ -401,11 +415,17 @@ rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
   if (parsed.id !== "GENERAL") throw invalidArgument(`unsupported setting key: ${parsed.id}`);
   const target = await mustGetSettingTarget(ctx, parsed.username);
 
-  const paths = normalizePaths(req);
+  let paths = normalizePaths(req);
+  const incoming = req.setting?.generalSetting ?? {};
+  // 智能兜底：如果前端未传 update_mask，根据传入的 generalSetting 键自动推导
+  if (paths.length === 0) {
+    paths = Object.keys(incoming)
+      .filter((k) => incoming[k] !== undefined && incoming[k] !== null)
+      .map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
+  }
   if (paths.length === 0) throw invalidArgument("update_mask is required");
 
   const current = await getGeneralSetting(ctx.env, target.id);
-  const incoming = req.setting?.generalSetting ?? {};
   for (const path of paths) {
     switch (path) {
       case "locale":
@@ -484,7 +504,13 @@ rpc("UserService", "UpdateUserWebhook", "required", async (req, ctx) => {
   const webhook = webhooks.find((w) => w.name === req.webhook.name);
   if (!webhook) throw notFound(`webhook not found: ${req.webhook.name}`);
 
-  const paths = normalizePaths(req);
+  let paths = normalizePaths(req);
+  if (paths.length === 0 && req.webhook) {
+    paths = Object.keys(req.webhook)
+      .filter((k) => k !== "name" && req.webhook[k] !== undefined)
+      .map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
+  }
+
   const apply = (path: string) => {
     if (path === "url") {
       if (typeof req.webhook.url === "string" && req.webhook.url.length > 0) webhook.url = req.webhook.url;
@@ -497,7 +523,6 @@ rpc("UserService", "UpdateUserWebhook", "required", async (req, ctx) => {
   if (paths.length > 0) {
     for (const path of paths) apply(path);
   } else {
-    // 无 mask 时按提供的字段更新
     if (typeof req.webhook.url === "string" && req.webhook.url.length > 0) webhook.url = req.webhook.url;
     if (typeof req.webhook.displayName === "string") webhook.displayName = req.webhook.displayName;
   }
@@ -852,7 +877,12 @@ rpc("UserService", "UpdateUserNotification", "required", async (req, ctx) => {
   const id = Number(parsed.id);
   if (!Number.isInteger(id)) throw invalidArgument(`invalid notification id: ${parsed.id}`);
 
-  const paths = normalizePaths(req);
+  let paths = normalizePaths(req);
+  if (paths.length === 0 && req.notification) {
+    paths = Object.keys(req.notification)
+      .filter((k) => k !== "name" && req.notification[k] !== undefined)
+      .map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
+  }
   if (paths.length > 0 && !paths.includes("status")) throw invalidArgument("only status can be updated");
   const status = req.notification?.status;
   if (status !== "UNREAD" && status !== "ARCHIVED") throw invalidArgument(`invalid status: ${status}`);
