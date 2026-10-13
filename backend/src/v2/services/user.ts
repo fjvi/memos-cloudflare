@@ -342,25 +342,48 @@ rpc("UserService", "GetUserStats", "optional", async (req, ctx) => {
   return stats;
 });
 
-rpc("UserService", "ListAllUserStats", "optional", async (_req, ctx) => {
-  const [visSql, visParams] = visibilityWhere(ctx.auth);
-  const [users, memos] = await Promise.all([
-    ctx.env.DB.prepare("SELECT id, username FROM user WHERE row_status = 'NORMAL'").all<{ id: number; username: string }>(),
-    ctx.env.DB.prepare(
-      `SELECT m.creator_id, m.uid, m.created_ts, m.updated_ts, m.pinned, m.payload FROM memo m
-       WHERE m.row_status = 'NORMAL' AND ${visSql} ORDER BY m.created_ts DESC`,
-    )
-      .bind(...visParams)
-      .all<StatsMemoRow & { creator_id: number }>(),
-  ]);
-
-  const statsByUserId = new Map<number, Record<string, any>>();
-  for (const u of users.results ?? []) statsByUserId.set(u.id, emptyStats(u.username));
-  for (const row of memos.results ?? []) {
-    const stats = statsByUserId.get(row.creator_id);
-    if (stats) accumulateStats(stats, row);
+rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
+  const auth = requireAuth(ctx);
+  
+  // 1. 获取目标用户的 ID（优先从请求中解析，失败则用当前登录用户）
+  let targetUserId = auth.userId;
+  const rawName = req.setting?.name || req.name;
+  if (rawName) {
+    const parsed = parseChildName(rawName, "settings");
+    if (parsed?.username) {
+      const targetUser = await getUserByUsername(ctx.env, parsed.username);
+      if (targetUser) targetUserId = targetUser.id;
+    }
   }
-  return { stats: [...statsByUserId.values()] };
+
+  // 2. 暴力提取前端传来的设置值（兼容各种嵌套层级）
+  const incoming = req.setting?.generalSetting ?? req.setting ?? req;
+  const locale = incoming.locale;
+  const theme = incoming.theme ?? incoming.appearance;
+  const memoVisibility = incoming.memoVisibility ?? incoming.memo_visibility;
+
+  // 3. 读取当前用户的 GENERAL 设置，并合并新值
+  const current = await getGeneralSetting(ctx.env, targetUserId);
+  if (locale !== undefined) current.locale = locale;
+  if (theme !== undefined) {
+    current.theme = theme;
+    current.appearance = theme;
+  }
+  if (memoVisibility !== undefined) current.memoVisibility = memoVisibility;
+
+  // 4. 直接硬编码写入 D1 数据库的 user_setting 表
+  await upsertUserSetting(ctx.env, targetUserId, "GENERAL", current);
+
+  // 5. 立即返回成功响应
+  const targetUserRow = await ctx.env.DB.prepare("SELECT username FROM user WHERE id = ?").bind(targetUserId).first<{ username: string }>();
+  const username = targetUserRow?.username || auth.username;
+
+  return {
+    setting: {
+      name: `users/${username}/settings/GENERAL`,
+      generalSetting: current,
+    },
+  };
 });
 
 // ---------- UserSetting（user_setting 表 key=GENERAL/WEBHOOKS）----------
