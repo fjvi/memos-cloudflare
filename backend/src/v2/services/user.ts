@@ -344,8 +344,8 @@ rpc("UserService", "GetUserStats", "optional", async (req, ctx) => {
 
 rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
   const auth = requireAuth(ctx);
-  
-  // 1. 获取目标用户的 ID
+
+  // 1. 安全解析目标用户
   let targetUserId = auth.userId;
   const rawName = req.setting?.name || req.name;
   if (rawName) {
@@ -356,13 +356,13 @@ rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
     }
   }
 
-  // 2. 极其宽容地提取前端传来的设置项（兼容各种结构嵌套）
+  // 2. 提取前端传来的设置项
   const incoming = req.setting?.generalSetting ?? req.setting ?? req;
   const locale = incoming.locale;
   const theme = incoming.theme ?? incoming.appearance;
   const memoVisibility = incoming.memoVisibility ?? incoming.memo_visibility;
 
-  // 3. 读取当前用户的 GENERAL 设置并合并
+  // 3. 读取当前用户的 GENERAL 设置并合并更新
   const current = await getGeneralSetting(ctx.env, targetUserId);
   if (locale !== undefined) current.locale = locale;
   if (theme !== undefined) {
@@ -371,17 +371,29 @@ rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
   }
   if (memoVisibility !== undefined) current.memoVisibility = memoVisibility;
 
-  // 4. 直接持久化写入 D1 数据库
+  // 4. 持久化写入 D1 数据库
   await upsertUserSetting(ctx.env, targetUserId, "GENERAL", current);
 
-  // 5. 返回符合标准的响应
+  // 5. 获取当前用户的标准名称
   const targetUserRow = await ctx.env.DB.prepare("SELECT username FROM user WHERE id = ?").bind(targetUserId).first<{ username: string }>();
   const username = targetUserRow?.username || auth.username;
+  const settingName = `users/${username}/settings/GENERAL`;
 
+  // 6. 返回严格符合前端 Connect-RPC 反序列化预期的标准结构
   return {
+    name: settingName,
     setting: {
-      name: `users/${username}/settings/GENERAL`,
-      generalSetting: current,
+      name: settingName,
+      generalSetting: {
+        locale: current.locale || "en",
+        memoVisibility: current.memoVisibility || "PRIVATE",
+        theme: current.theme || "",
+      },
+    },
+    generalSetting: {
+      locale: current.locale || "en",
+      memoVisibility: current.memoVisibility || "PRIVATE",
+      theme: current.theme || "",
     },
   };
 });
