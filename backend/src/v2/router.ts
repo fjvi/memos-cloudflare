@@ -44,6 +44,28 @@ export function mountConnectRoutes(app: Hono<{ Bindings: Env }>) {
       if (raw) {
         try {
           requestBody = JSON.parse(raw);
+		  // 💡 针对 UpdateUserSetting 的万能参数格式化补丁
+      if (key === "memos.api.v1.UserService/UpdateUserSetting") {
+        if (!requestBody.setting) {
+          requestBody.setting = {};
+        }
+        // 如果前端把 theme / locale / memoVisibility 直接传在根节点，给它挪到 generalSetting 里
+        if (!requestBody.setting.generalSetting) {
+          requestBody.setting.generalSetting = {
+            theme: requestBody.theme || requestBody.appearance || requestBody.setting.theme || "",
+            locale: requestBody.locale || requestBody.setting.locale || "en",
+            memoVisibility: requestBody.memoVisibility || requestBody.memo_visibility || requestBody.setting.memoVisibility || "PRIVATE"
+          };
+        }
+        // 自动补全 name
+        if (!requestBody.setting.name && auth) {
+          requestBody.setting.name = `users/${auth.username}/settings/GENERAL`;
+        }
+        // 自动补全 updateMask
+        if (!requestBody.updateMask && !requestBody.update_mask) {
+          requestBody.update_mask = ["theme", "locale", "memo_visibility"];
+        }
+      }
         } catch {
           console.error(`[Router] Malformed JSON in RPC ${key}`);
           throw new ConnectError("invalid_argument", "malformed JSON request body");
