@@ -1,4 +1,4 @@
-name: Deploy Memos-Cloudflare to Cloudflare
+name: Deploy Memos-Cloudflare to Cloudflare Workers
 
 on:
   push:
@@ -16,20 +16,23 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'   # 推荐使用稳定的 Node.js 22 或 24
-          #cache: 'npm'
+          node-version: '22'
+          cache: 'npm'
 
-      - name: Install Dependencies
-        run: npm install
+      # 1. 启用 Corepack 并使用 pnpm 构建前端
+      - name: Build Frontend
+        run: |
+          cd frontend
+          corepack enable
+          pnpm install
+          pnpm build
 
-      # 如果项目有前端构建步骤（通常有 npm run build），请确保保留此行
-      - name: Build Project
-        run: npm run build
-
-      # 使用官方的 wrangler-action 部署到 Cloudflare
-      - name: Publish to Cloudflare
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+      # 2. 进入后端目录安装依赖并部署
+      - name: Install Backend Dependencies & Deploy
+        run: |
+          cd backend
+          npm install
+          npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
