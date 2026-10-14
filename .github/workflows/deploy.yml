@@ -1,0 +1,35 @@
+name: Deploy Memos-Cloudflare to Cloudflare
+
+on:
+  push:
+    branches:
+      - main     # 如果你的默认分支是 master，请修改为 master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'   # 推荐使用稳定的 Node.js 22 或 24
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      # 如果项目有前端构建步骤（通常有 npm run build），请确保保留此行
+      - name: Build Project
+        run: npm run build
+
+      # 使用官方的 wrangler-action 部署到 Cloudflare
+      - name: Publish to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
