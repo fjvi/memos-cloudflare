@@ -18,6 +18,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+          cache-dependency-path: backend/package-lock.json  # 准确指定后端锁文件的路径
 
       # 1. 启用 Corepack 并使用 pnpm 构建前端
       - name: Build Frontend
