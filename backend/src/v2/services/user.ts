@@ -49,22 +49,9 @@ const mustGetUserByName = async (env: Env, name: string): Promise<UserRow> => {
   return user;
 };
 
-/** 完美兼容字符串、数组或对象的 updateMask 解析器 */
-const normalizePaths = (req: any): string[] => {
-  const rawMask = req?.updateMask ?? req?.update_mask;
-  let paths: string[] = [];
-  
-  if (typeof rawMask === "string") {
-    // 兼容前端传单字符串的情况，如 "locale" 或逗号分隔的 "locale,theme"
-    paths = rawMask.split(",").map((s) => s.trim()).filter(Boolean);
-  } else if (Array.isArray(rawMask)) {
-    paths = rawMask.map((p) => String(p));
-  } else if (Array.isArray(rawMask?.paths)) {
-    paths = rawMask.paths;
-  }
-  
-  return paths.map((p) => p.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
-};
+/** updateMask paths 统一为 snake_case */
+const normalizePaths = (req: any): string[] =>
+  ((req?.updateMask?.paths ?? []) as string[]).map((p) => p.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`));
 
 const validateUsername = (username: unknown): string => {
   if (typeof username !== "string" || username.length === 0) throw invalidArgument("username is required");
@@ -342,60 +329,25 @@ rpc("UserService", "GetUserStats", "optional", async (req, ctx) => {
   return stats;
 });
 
-rpc("UserService", "UpdateUserSetting", "required", async (req, ctx) => {
-  const auth = requireAuth(ctx);
+rpc("UserService", "ListAllUserStats", "optional", async (_req, ctx) => {
+  const [visSql, visParams] = visibilityWhere(ctx.auth);
+  const [users, memos] = await Promise.all([
+    ctx.env.DB.prepare("SELECT id, username FROM user WHERE row_status = 'NORMAL'").all<{ id: number; username: string }>(),
+    ctx.env.DB.prepare(
+      `SELECT m.creator_id, m.uid, m.created_ts, m.updated_ts, m.pinned, m.payload FROM memo m
+       WHERE m.row_status = 'NORMAL' AND ${visSql} ORDER BY m.created_ts DESC`,
+    )
+      .bind(...visParams)
+      .all<StatsMemoRow & { creator_id: number }>(),
+  ]);
 
-  // 1. 安全解析目标用户
-  let targetUserId = auth.userId;
-  const rawName = req.setting?.name || req.name;
-  if (rawName) {
-    const parsed = parseChildName(rawName, "settings");
-    if (parsed?.username) {
-      const targetUser = await getUserByUsername(ctx.env, parsed.username);
-      if (targetUser) targetUserId = targetUser.id;
-    }
+  const statsByUserId = new Map<number, Record<string, any>>();
+  for (const u of users.results ?? []) statsByUserId.set(u.id, emptyStats(u.username));
+  for (const row of memos.results ?? []) {
+    const stats = statsByUserId.get(row.creator_id);
+    if (stats) accumulateStats(stats, row);
   }
-
-  // 2. 提取前端传来的设置项
-  const incoming = req.setting?.generalSetting ?? req.setting ?? req;
-  const locale = incoming.locale;
-  const theme = incoming.theme ?? incoming.appearance;
-  const memoVisibility = incoming.memoVisibility ?? incoming.memo_visibility;
-
-  // 3. 读取当前用户的 GENERAL 设置并合并更新
-  const current = await getGeneralSetting(ctx.env, targetUserId);
-  if (locale !== undefined) current.locale = locale;
-  if (theme !== undefined) {
-    current.theme = theme;
-    current.appearance = theme;
-  }
-  if (memoVisibility !== undefined) current.memoVisibility = memoVisibility;
-
-  // 4. 持久化写入 D1 数据库
-  await upsertUserSetting(ctx.env, targetUserId, "GENERAL", current);
-
-  // 5. 获取当前用户的标准名称
-  const targetUserRow = await ctx.env.DB.prepare("SELECT username FROM user WHERE id = ?").bind(targetUserId).first<{ username: string }>();
-  const username = targetUserRow?.username || auth.username;
-  const settingName = `users/${username}/settings/GENERAL`;
-
-  // 6. 返回严格符合前端 Connect-RPC 反序列化预期的标准结构
-  return {
-    name: settingName,
-    setting: {
-      name: settingName,
-      generalSetting: {
-        locale: current.locale || "en",
-        memoVisibility: current.memoVisibility || "PRIVATE",
-        theme: current.theme || "",
-      },
-    },
-    generalSetting: {
-      locale: current.locale || "en",
-      memoVisibility: current.memoVisibility || "PRIVATE",
-      theme: current.theme || "",
-    },
-  };
+  return { stats: [...statsByUserId.values()] };
 });
 
 // ---------- UserSetting（user_setting 表 key=GENERAL/WEBHOOKS）----------

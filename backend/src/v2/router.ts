@@ -29,47 +29,10 @@ export function rpc(service: string, method: string, auth: AuthPolicy, handler: 
 
 /** 挂载 Connect JSON 路由。所有 RPC 都是 POST /memos.api.v1.<Service>/<Method> */
 export function mountConnectRoutes(app: Hono<{ Bindings: Env }>) {
+  // 路径形如 /memos.api.v1.MemoService/ListMemos。“.”不是段分隔符，
+  // Hono 段内不支持静态前缀混写，这里用段内正则参数匹配整个 service 全名。
   app.post("/:service{memos\\.api\\.v1\\.[A-Za-z]+}/:method", async (c) => {
     const key = `${c.req.param("service")}/${c.req.param("method")}`;
-    
-    // 💡 终极网关兜底：直接在最前端接管 UpdateUserSetting，绕过 registry 校验
-    if (key === "memos.api.v1.UserService/UpdateUserSetting") {
-      try {
-        const rawText = await c.req.text();
-        const body = rawText ? JSON.parse(rawText) : {};
-        const incoming = body.setting?.generalSetting ?? body.setting ?? body;
-        const locale = incoming.locale || "en";
-        const theme = incoming.theme || incoming.appearance || "system";
-
-        const auth = await authenticate(c.req.raw, c.env).catch(() => null);
-        if (!auth) {
-          return new Response(JSON.stringify({ code: 16, message: "unauthenticated" }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" }
-          });
-        }
-
-        // 直接写入 D1 数据库
-        const current = { locale, theme, appearance: theme, memoVisibility: "PRIVATE" };
-        await c.env.DB.prepare(
-          `INSERT INTO user_setting (user_id, key, value) VALUES (?, 'GENERAL', ?)
-           ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`
-        ).bind(auth.userId, JSON.stringify(current)).run();
-
-        return new Response(JSON.stringify({
-          setting: {
-            name: `users/${auth.username}/settings/GENERAL`,
-            generalSetting: current,
-          }
-        }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" }
-        });
-      } catch (e) {
-        console.error("Gateway UpdateUserSetting error:", e);
-      }
-    }
-
     const registration = registry.get(key);
 
     try {
